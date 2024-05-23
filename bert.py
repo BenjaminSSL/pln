@@ -67,6 +67,7 @@ class BertTagger():
             learning_rate=learning_rate,
             num_train_epochs=epochs,
             evaluation_strategy="steps",
+            save_steps=4500,
             save_strategy="steps",
             load_best_model_at_end=True,
             push_to_hub=False,
