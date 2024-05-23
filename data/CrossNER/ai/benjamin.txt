@@ -18,39 +18,12 @@ British	B-misc
 lamb	O
 .	O
 
-Peter	B-person
-Blackburn	I-person
-
-BRUSSELS	B-location
-1996-08-22	O
-
-The	O
-European	B-organisation
-Commission	I-organisation
-said	O
-on	O
-Thursday	O
-it	O
-disagreed	O
-with	O
+EU	B-organisation
+rejects	O
 German	B-misc
-advice	O
+call	O
 to	O
-consumers	O
-to	O
-shun	O
+boycott	O
 British	B-misc
 lamb	O
-until	O
-scientists	O
-determine	O
-whether	O
-mad	O
-cow	O
-disease	O
-can	O
-be	O
-transmitted	O
-to	O
-sheep	O
 .	O

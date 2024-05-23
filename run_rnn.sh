@@ -1,11 +1,11 @@
 ### CONFIG ###
 
 # Which dataset to train the model on, has to be in CoNLL format
-DATASET="data/CrossNER/ai/test_all.txt"
+DATASET="data/CrossNER/conll2003/train.txt"
 # Number of epochs to train the model
-EPOCHS=1
+EPOCHS=10
 # Learning rate for the optimizer
-LEARNING_RATE=0.1
+LEARNING_RATE=0.05
 
 
 ### TRAINING ###

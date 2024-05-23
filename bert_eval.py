@@ -1,129 +1,158 @@
 import json
+import pickle
 from util.data import load_data
 from transformers import BertTokenizerFast
 from transformers import AutoModelForTokenClassification
 from transformers import pipeline
 import datasets
+from bert import CustomTokenizerAligner
+from multiprocessing import Process, Queue
 
 from util.map_labels import map_list
+from util.metric import compute_accuracy, compute_metrics, compute_tag_accuracy
 
 # https://github.com/rohan-paul/LLM-FineTuning-Large-Language-Models/blob/main/Other-Language_Models_BERT_related/YT_Fine_tuning_BERT_NER_v1.ipynb
 
 
-def tokenize_and_align_labels(data):
+TOKENIZER_PATH = "output/tokenizer"
+MODEL_PATH = "output/ner_model"
 
-    tokenizer_fine_tuned = BertTokenizerFast.from_pretrained(
-        "output/tokenizer")
-    tokenized_inputs = tokenizer_fine_tuned(
-        data["tokens"],  is_split_into_words=True)
+
+def predict(pipe, eval_dataset, queue):
+    labels, pred = [], []
+    label_names = ["O", "B-location", "I-location", "B-organisation",
+                   "I-organisation", "B-person", "I-person", "B-misc", "I-misc"]
+    length = len(eval_dataset)
+    for index, sentence in enumerate(eval_dataset):
+        if index % 1 == 0:
+            print(f"{index}/{length}")
+        tokens = sentence["tokens"]
+
+        tags = sentence["tags"]
+
+        tags = [label_names[tag] for tag in tags]
+
+        labels.append(tags)
+
+        predictions = pipe(tokens)
+
+        label_predictions = []
+
+        for prediction in predictions:
+
+            if len(prediction) > 0:
+                label_predictions.append(prediction[0].get("entity"))
+            else:
+                label_predictions.append("O")
+
+        pred.append(label_predictions)
+
+    queue.put({"labels": labels, "pred": pred})
+
+
+def main():
+
+    eval_dataset = load_data(
+        "./data/CrossNER/conll2003/train_testing.txt", as_dict=True)
+
+    for value in eval_dataset:
+        value["tags"] = map_list(value["tags"], "ai")
+
+    label_names = ["O", "B-location", "I-location", "B-organisation",
+                   "I-organisation", "B-person", "I-person", "B-misc", "I-misc"]
+
+    id2label = {
+        str(i): label for i, label in enumerate(label_names)
+    }
+    label2id = {
+        label: str(i) for i, label in enumerate(label_names)
+    }
+
+    features = datasets.Features({"tokens": datasets.Sequence(datasets.Value(
+        "string")), "tags": datasets.Sequence(datasets.ClassLabel(names=label_names))})
+
+    config = json.load(open(MODEL_PATH+"/config.json"))
+    config["id2label"] = id2label
+    config["label2id"] = label2id
+
+    json.dump(config, open(MODEL_PATH+"/config.json", "w"))
+    tokenizer_fine_tuned = BertTokenizerFast.from_pretrained(TOKENIZER_PATH)
+    model_fine_tuned = AutoModelForTokenClassification.from_pretrained(
+        "output/ner_model")
+
+    cmt = CustomTokenizerAligner(tokenizer_fine_tuned)
+
+    eval_dataset_loader = datasets.Dataset.from_list(
+        eval_dataset, features=features)
+    eval_dataset_loader = eval_dataset_loader.map(
+        cmt.tokenize_and_align_labels, batched=True)
+
+    dataset_list = []
+
+    length = len(eval_dataset)
+
+    split = 1
+
+    for i in range(split):
+        start = i * (length // split)
+
+        end = (i + 1) * (length // split) if i != split - 1 else length
+        eval_dataset_loader = datasets.Dataset.from_list(
+            eval_dataset[start:end], features=features)
+        eval_dataset_loader = eval_dataset_loader.map(
+            cmt.tokenize_and_align_labels, batched=True)
+        dataset_list.append(eval_dataset_loader)
+
+    pipe = pipeline("ner", model=model_fine_tuned,
+                    tokenizer=tokenizer_fine_tuned)
+
+    queue = Queue()
+    proccesses = []
+    results = []
+
+    for i in range(0, split):
+
+        print(f"Starting process {i}")
+
+        p = Process(target=predict, args=(
+            pipe, dataset_list[i], queue))
+        proccesses.append(p)
+        p.start()
+    print(proccesses)
+
+    for _ in range(0, split):
+        results.append(queue.get())
+
+    print("All processes started")
+
+    for p in proccesses:
+        p.join()
+    print("All processes joined")
 
     labels = []
-    for i, label in enumerate(data[f"tags"]):
-        # Map tokens to their respective word.
-        word_ids = tokenized_inputs.word_ids(batch_index=i)
-        previous_word_idx = None
-        label_ids = []
-        for word_idx in word_ids:  # Set the special tokens to -100.
+    predictions = []
 
-            if word_idx is None:
-                label_ids.append(-100)
-            # Only label the first token of a given word.
-            elif word_idx != previous_word_idx:
-                label_ids.append(label[word_idx])
-            else:
-                label_ids.append(-100)
-            previous_word_idx = word_idx
-        labels.append(label_ids)
+    for result in results:
+        labels.extend(result["labels"])
+        predictions.extend(result["pred"])
+    print("All processes done")
+    pickle.dump(labels, open("output/labels.list", "wb"))
+    pickle.dump(predictions, open("output/predictions.list", "wb"))
 
-    tokenized_inputs["labels"] = labels
-    return tokenized_inputs
+    precision, recall, f1 = compute_metrics(labels, predictions)
 
+    print(f"Precision: {precision}")
+    print(f"Recall: {recall}")
+    print(f"F1: {f1}")
 
-testset = load_data("./data/CrossNER/ai/benjamin.txt", as_dict=True)
+    accuracy = compute_accuracy(labels, predictions)
 
-for value in testset:
-    value["tags"] = map_list(value["tags"], "ai")
+    print(f"Accuracy: {accuracy}")
 
-label_names = ["O", "B-location", "I-location", "B-organisation",
-               "I-organisation", "B-person", "I-person", "B-misc", "I-misc"]
+    tag_accuracy = compute_tag_accuracy(labels, predictions)
+
+    print(f"Tag Accuracy: {tag_accuracy}")
 
 
-id2label = {
-    str(i): label for i, label in enumerate(label_names)
-}
-label2id = {
-    label: str(i) for i, label in enumerate(label_names)
-}
-
-features = datasets.Features({"tokens": datasets.Sequence(datasets.Value(
-    "string")), "tags": datasets.Sequence(datasets.ClassLabel(names=label_names))})
-
-
-config = json.load(open("output/ner_model/config.json"))
-config["id2label"] = id2label
-config["label2id"] = label2id
-json.dump(config, open("output/ner_model/config.json", "w"))
-tokenizer_fine_tuned = BertTokenizerFast.from_pretrained("output/tokenizer")
-model_fine_tuned = AutoModelForTokenClassification.from_pretrained(
-    "output/ner_model")
-
-eval_dataset_loader = datasets.Dataset.from_list(
-    testset, features=features)
-eval_dataset_loader = eval_dataset_loader.map(
-    tokenize_and_align_labels, batched=True)
-
-
-pipe = pipeline("ner", model=model_fine_tuned, tokenizer=tokenizer_fine_tuned)
-
-acc = 0
-
-
-def calculate_start_end_index(tokens, tags):
-
-    tags_locations = []
-    marker = 0
-    for index, tag in enumerate(tags):
-
-        start = marker
-        end = start + len(tokens[index])
-        if tag != "O":
-            tags_locations.append({"start": start, "end": end, "entity": tag})
-
-        # Update the marker and add 1 for the space
-        marker = end + 1
-
-    return tags_locations
-
-
-total = 0
-for data in eval_dataset_loader:
-    labels = data["labels"]
-
-    for label in labels:
-        if label != -100 and label != 0:
-            total += 1
-
-print("total", total)
-
-
-for sentence in eval_dataset_loader:
-
-    tokens = sentence["tokens"]
-    tags = sentence["tags"]
-    labels = sentence["labels"]
-    print(" ".join(tokens))
-    prediction = pipe(" ".join(tokens))
-    print(prediction)
-
-    for pred in prediction:
-
-        if labels[pred["index"]] == -100:
-            continue
-
-        print(pred["entity"], label_names[labels[pred["index"]]])
-
-        if pred["entity"] == label_names[labels[pred["index"]]]:
-
-            acc += 1
-
-print(acc / total)
+if __name__ == "__main__":
+    main()

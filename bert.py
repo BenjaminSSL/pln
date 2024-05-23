@@ -1,18 +1,42 @@
 from argparse import ArgumentParser
-import json
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
-import numpy as np
-import evaluate
 from util.data import load_data
-from util.vocab import Vocab
 import datasets
 from transformers import BertTokenizerFast
 from transformers import DataCollatorForTokenClassification
 from transformers import AutoModelForTokenClassification
 from transformers import TrainingArguments, Trainer
-from transformers import pipeline
+
+
+class CustomTokenizerAligner():
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+
+    def tokenize_and_align_labels(self, data):
+
+        tokenized_inputs = self.tokenizer(
+            data["tokens"], truncation=True, is_split_into_words=True)
+
+        labels = []
+        for i, label in enumerate(data[f"tags"]):
+            # Map tokens to their respective word.
+            word_ids = tokenized_inputs.word_ids(batch_index=i)
+            previous_word_idx = None
+            label_ids = []
+            for word_idx in word_ids:  # Set the special tokens to -100.
+
+                if word_idx is None:
+                    label_ids.append(-100)
+                # Only label the first token of a given word.
+                elif word_idx != previous_word_idx:
+                    label_ids.append(label[word_idx])
+                else:
+                    label_ids.append(-100)
+                previous_word_idx = word_idx
+            labels.append(label_ids)
+
+        tokenized_inputs["labels"] = labels
+        return tokenized_inputs
 
 
 class BertTagger():
@@ -30,37 +54,20 @@ class BertTagger():
 
     # SORUCE: https://huggingface.co/docs/transformers/en/tasks/token_classification (with modifications)
 
-    def tokenize_and_align_labels(self, data):
-        tokenized_inputs = self.tokenizer(
-            data["tokens"], truncation=True, is_split_into_words=True)
+    def prepare_labels(self, data):
 
-        labels = []
-        for i, label in enumerate(data[f"tags"]):
-            # Map tokens to their respective word.
-            word_ids = tokenized_inputs.word_ids(batch_index=i)
-            previous_word_idx = None
-            label_ids = []
-            for word_idx in word_ids:  # Set the special tokens to -100.
-                if word_idx is None:
-                    label_ids.append(-100)
-                # Only label the first token of a given word.
-                elif word_idx != previous_word_idx:
-                    label_ids.append(label[word_idx])
-                else:
-                    label_ids.append(-100)
-                previous_word_idx = word_idx
-            labels.append(label_ids)
+        cmt = CustomTokenizerAligner(self.tokenizer)
 
-        tokenized_inputs["labels"] = labels
-        return tokenized_inputs
+        return cmt.tokenize_and_align_labels(data)
 
-    def train(self, dataloader, epochs, learning_rate):
+    def train(self, dataloader, devset_loader, epochs, learning_rate):
 
         training_args = TrainingArguments(
             output_dir="./output",
             learning_rate=learning_rate,
             num_train_epochs=epochs,
-            save_strategy="no",
+            evaluation_strategy="steps",
+            save_strategy="steps",
             load_best_model_at_end=True,
             push_to_hub=False,
         )
@@ -69,21 +76,22 @@ class BertTagger():
             model=self.model,
             args=training_args,
             train_dataset=dataloader,
+            eval_dataset=devset_loader,
             tokenizer=self.tokenizer,
             data_collator=self.data_collator,
 
-            # compute_metrics=compute_metrics,
+
         )
 
         trainer.train()
 
         # print(trainer.evaluate())
 
-        self.model.save_pretrained("output/ner_model")
-        self.tokenizer.save_pretrained("output/tokenizer")
+        self.model.save_pretrained("output/bert/ner_model")
+        self.tokenizer.save_pretrained("output/bert/tokenizer")
 
 
-def train(dataset, epochs, learning_rate):
+def train(dataset, devset, epochs, learning_rate):
 
     # In future, extract this from the actual dataset
     labels = ["O", "B-location", "I-location", "B-organisation",
@@ -97,9 +105,15 @@ def train(dataset, epochs, learning_rate):
     dataset_loader = datasets.Dataset.from_list(
         dataset, features=features)
     dataset_loader = dataset_loader.map(
-        model.tokenize_and_align_labels, batched=True)
+        model.prepare_labels, batched=True)
 
-    model.train(dataset_loader, epochs, learning_rate)
+    devset_loader = datasets.Dataset.from_list(
+        devset, features=features)
+
+    devset_loader = devset_loader.map(
+        model.prepare_labels, batched=True)
+
+    model.train(dataset_loader, devset_loader, epochs, learning_rate)
 
     print("Model trained")
 
@@ -130,7 +144,9 @@ def main():
 
     train_dataset = load_data(args.dataset, as_dict=True)
 
-    train(train_dataset, args.epochs, args.learning_rate)
+    dev_dataset = load_data("./data/CrossNER/conll2003/dev.txt", as_dict=True)
+
+    train(train_dataset, dev_dataset, args.epochs, args.learning_rate)
 
 
 if __name__ == "__main__":

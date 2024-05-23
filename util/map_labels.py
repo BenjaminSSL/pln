@@ -77,5 +77,5 @@ def map_list(tokens, map_type):
         token = map_token(label, map_type)
 
         mapped.append(f"{prefix}-{token}")
-    print(mapped)
+
     return mapped

@@ -1,3 +1,4 @@
+import pickle
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -29,39 +30,42 @@ def make_vocabs(train_data, unk_pad="<UNK>"):
 
 
 class RNN(nn.Module):
-    def __init__(self, params, n_tokens, n_tags):
+    def __init__(self, n_tokens, n_tags):
         super(RNN, self).__init__()
+
+        params = {'hidden_dim': 128, 'embedding_dim': 128,
+                  'num_layers': 1, 'dropout': 0.2}
 
         self.token_embeddings = nn.Embedding(n_tokens, params["embedding_dim"])
 
-        self.lstm = nn.LSTM(params["embedding_dim"], params["hidden_dim"])
+        self.lstm = nn.LSTM(params["embedding_dim"],
+                            params["hidden_dim"])
 
         self.hidden2tag = nn.Linear(params['hidden_dim'], n_tags)
 
-    def forward(self, x,):
+    def forward(self, x):
         embeds = self.token_embeddings(x)
-
-        lstm_out, _ = self.lstm(embeds.view(len(x), 1, -1))
-        tag_space = self.hidden2tag(lstm_out.view(len(x), -1))
+        lstm_out, _ = self.lstm(embeds)
+        tag_space = self.hidden2tag(lstm_out)
         tag_scores = F.log_softmax(tag_space, dim=1)
         return tag_scores
 
 
-def train(train_data, epochs, learning_rate):
+def train(train_data, dev_dataset, epochs, learning_rate):
     print(f'Training on {len(train_data)} examples with {
           epochs} epochs and learning rate {learning_rate}...')
 
-    params = {'hidden_dim': 128, 'embedding_dim': 128,
-              'num_layers': 1, 'dropout': 0.2}
     token_vocab, tag_vocab = make_vocabs(train_data)
 
-    model = RNN(params, len(token_vocab), len(tag_vocab))
+    model = RNN(len(token_vocab), len(tag_vocab))
 
-    loss_function = nn.NLLLoss()
+    loss_function = nn.CrossEntropyLoss(ignore_index=-1, reduction='mean')
     optimizer = optim.SGD(model.parameters(), lr=learning_rate)
-
+    pickle.dump(token_vocab, open("output/rnn/token_vocab.pkl", "wb"))
+    pickle.dump(tag_vocab, open("output/rnn/tag_vocab.pkl", "wb"))
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
+
         for sentence, tags in train_data:
             model.zero_grad()
 
@@ -75,7 +79,34 @@ def train(train_data, epochs, learning_rate):
             loss.backward()
             optimizer.step()
 
-    torch.save(model.state_dict(), "output/model.pth")
+        print(f"Loss: {loss.item()} Accuracy: {compute_accuracy(
+            model, dev_dataset, token_vocab, tag_vocab)} epoch {epoch + 1}/{epoch}")
+
+        torch.save(model.state_dict(), f'output/rnn/model-{epoch+1}.pth')
+
+    torch.save(model.state_dict(), "output/rnn/model.pth")
+
+
+def compute_accuracy(model, test_data, token_vocab, tag_vocab):
+
+    acc = 0
+    for sentence, tags in test_data:
+        sentence_in = prepare_sequence(sentence, token_vocab)
+        targets = prepare_sequence(tags, tag_vocab)
+
+        tag_scores = model(sentence_in)
+        _, indices = torch.max(tag_scores, 1)
+
+        indices = indices.numpy()
+        targets = targets.numpy()
+
+        acc += sum([1 for i in range(len(indices))
+                    if indices[i] == targets[i]]) / len(indices)
+
+    acc /= len(test_data)
+    print(acc)
+
+    return acc
 
 
 def main():
@@ -91,7 +122,9 @@ def main():
 
     train_dataset = load_data(args.dataset)
 
-    train(train_dataset, args.epochs, args.learning_rate)
+    dev_dataset = load_data("./data/CrossNER/conll2003/dev.txt")
+
+    train(train_dataset, dev_dataset, args.epochs, args.learning_rate)
 
 
 if __name__ == "__main__":
