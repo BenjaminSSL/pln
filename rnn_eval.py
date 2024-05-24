@@ -1,8 +1,10 @@
+from argparse import ArgumentParser
+import json
+import os
 import torch
 from rnn import RNN, prepare_sequence
 from util.map_labels import map_list
-from util.metric import compute_accuracy, compute_metrics, compute_tag_accuracy
-from util.vocab import Vocab
+from util.metric import compute_accuracy, compute_metrics, compute_span_f1, compute_tag_accuracy
 from util.data import load_data
 import pickle
 
@@ -32,6 +34,17 @@ def predict(model, eval_dataset, tokens_vocab, tag_vocab):
 
 
 def main():
+    parser = ArgumentParser()
+
+    parser.add_argument("-d", "--dataset")
+    parser.add_argument("-s", "--save", default=False, action="store_true")
+
+    args = parser.parse_args()
+
+    dataset = args.dataset
+
+    eval_dataset = load_data(
+        dataset, as_dict=True)
 
     token_vocab = pickle.load(open("output/rnn/token_vocab.pkl", "rb"))
     tag_vocab = pickle.load(open("output/rnn/tag_vocab.pkl", "rb"))
@@ -40,14 +53,11 @@ def main():
 
     model.load_state_dict(torch.load("output/rnn/model.pth"))
 
-    eval_dataset = load_data(
-        "./data/CrossNER/conll2003/test.txt", as_dict=True)
+    folder = dataset.split("/")[-2]
 
-    eval_dataset = load_data(
-        "./data/CrossNER/ai/test_all.txt", as_dict=True)
-
-    for value in eval_dataset:
-        value["tags"] = map_list(value["tags"], "ai")
+    if folder != "conll2003":
+        for value in eval_dataset:
+            value["tags"] = map_list(value["tags"], folder)
 
     labels, predictions = predict(model, eval_dataset, token_vocab, tag_vocab)
 
@@ -57,22 +67,36 @@ def main():
 
     tag_accuracy = compute_tag_accuracy(labels, predictions)
 
-    print(f"Accuracy: {accuracy}")
-    print(f"Tag Accuracy: {tag_accuracy}")
-    print(f"Precision: {precision}")
-    print(f"Recall: {recall}")
-    print(f"F1: {f1}")
+    compute_span_f1(labels, predictions)
 
-    # sentence = "Peter Blackburn work in Property Capital".split()
-    # sentence_in = prepare_sequence(sentence, token_vocab)
+    span_f1 = compute_span_f1(labels, predictions)
 
-    # print(sentence_in)
+    if args.save:
+        metrics = {
+            "accuracy": accuracy,
+            "tag_accuracy": tag_accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "span_f1": span_f1,
+        }
 
-    # tags_scores = model(sentence_in)
+        if not os.path.exists("output/metrics/rnn/"):
+            os.makedirs("output/metrics/rnn/")
+        # Save metrics
+        with open("output/metrics/rnn/{}.json".format(folder), "w+") as f:
+            json.dump(metrics, f)
 
-    # _, predicted_tags = torch.max(tags_scores, 1)
+        # sentence = "Peter Blackburn work in Property Capital".split()
+        # sentence_in = prepare_sequence(sentence, token_vocab)
 
-    # print([tag_vocab.getWord(idx) for idx in predicted_tags])
+        # print(sentence_in)
+
+        # tags_scores = model(sentence_in)
+
+        # _, predicted_tags = torch.max(tags_scores, 1)
+
+        # print([tag_vocab.getWord(idx) for idx in predicted_tags])
 
 
 if __name__ == "__main__":

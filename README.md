@@ -5,8 +5,15 @@
 ### Contributors:
 
 -   Benjamin Storm Larsen (bsla@itu.dk)
--   Hakon Eriksen (hake@itu.dk)
 -   Yuliia Storm Larsen (yuls@itu.dk)
+-   Hakon Eriksen (hake@itu.dk)
+
+The project used python version 3.12.2
+Install the required packages using the following command:
+
+```bash
+pip install -r requirements.txt
+```
 
 The repository contains two models, so we have created two seperate bash scripts for running the models and evaluating the results. The bash scripts are as follows:
 
@@ -24,4 +31,9 @@ However for the sake of simplicity, we have also created a single bash script th
 bash run.sh
 ```
 
-If you wish to change the parameters and datasets then you can do so by changing the config environment variables in the individual bash scripts.
+The baseline should me runned manually, as it is not included in the run.sh script. To run the baseline use the following command:
+
+```bash
+cd baseline
+python baseline.py
+```

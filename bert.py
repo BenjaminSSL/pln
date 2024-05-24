@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+import os
 from util.data import load_data
 import datasets
 from transformers import BertTokenizerFast
@@ -18,7 +19,7 @@ class CustomTokenizerAligner():
             data["tokens"], truncation=True, is_split_into_words=True)
 
         labels = []
-        for i, label in enumerate(data[f"tags"]):
+        for i, label in enumerate(data["tags"]):
             # Map tokens to their respective word.
             word_ids = tokenized_inputs.word_ids(batch_index=i)
             previous_word_idx = None
@@ -47,9 +48,9 @@ class BertTagger():
         self.id2label = {i: label for i, label in enumerate(labels)}
         self.label2id = {label: i for i, label in enumerate(labels)}
         self.tokenizer = BertTokenizerFast.from_pretrained(
-            "bert-base-uncased")
+            "prajjwal1/bert-tiny")
         self.data_collator = DataCollatorForTokenClassification(self.tokenizer)
-        self.model = AutoModelForTokenClassification.from_pretrained("bert-base-uncased", num_labels=len(self.labels), id2label=self.id2label, label2id=self.label2id
+        self.model = AutoModelForTokenClassification.from_pretrained("prajjwal1/bert-tiny", num_labels=len(self.labels), id2label=self.id2label, label2id=self.label2id
                                                                      )
 
     # SORUCE: https://huggingface.co/docs/transformers/en/tasks/token_classification (with modifications)
@@ -67,7 +68,7 @@ class BertTagger():
             learning_rate=learning_rate,
             num_train_epochs=epochs,
             evaluation_strategy="steps",
-            save_steps=4500,
+            save_steps=500,
             save_strategy="steps",
             load_best_model_at_end=True,
             push_to_hub=False,
@@ -86,10 +87,11 @@ class BertTagger():
 
         trainer.train()
 
-        # print(trainer.evaluate())
+        if not os.path.exists("output/bert/"):
+            os.makedirs("output/bert/")
 
-        self.model.save_pretrained("output/bert/ner_model")
-        self.tokenizer.save_pretrained("output/bert/tokenizer")
+        self.model.save_pretrained("output/bert/ner_model_tiny")
+        self.tokenizer.save_pretrained("output/bert/tokenizer_tiny")
 
 
 def train(dataset, devset, epochs, learning_rate):
@@ -117,18 +119,6 @@ def train(dataset, devset, epochs, learning_rate):
     model.train(dataset_loader, devset_loader, epochs, learning_rate)
 
     print("Model trained")
-
-    # config = json.load(open("ner_model/config.json"))
-
-    # model_fine_tuned = AutoModelForTokenClassification.from_pretrained(
-    #     "ner_model")
-
-    # tokenizer_fine_tuned = BertTokenizerFast.from_pretrained("tokenizer")
-
-    # pipe = pipeline("ner", model=model_fine_tuned,
-    #                 tokenizer=tokenizer_fine_tuned)
-
-    # print(pipe("Shen told Reuters Television"))
 
 
 def main():

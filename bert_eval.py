@@ -1,4 +1,6 @@
+from argparse import ArgumentParser
 import json
+import os
 import pickle
 from util.data import load_data
 from transformers import BertTokenizerFast
@@ -9,13 +11,13 @@ from bert import CustomTokenizerAligner
 from multiprocessing import Process, Queue
 
 from util.map_labels import map_list
-from util.metric import compute_accuracy, compute_metrics, compute_tag_accuracy
+from util.metric import compute_accuracy, compute_metrics, compute_span_f1, compute_tag_accuracy
 
 # https://github.com/rohan-paul/LLM-FineTuning-Large-Language-Models/blob/main/Other-Language_Models_BERT_related/YT_Fine_tuning_BERT_NER_v1.ipynb
 
 
-TOKENIZER_PATH = "output/tokenizer"
-MODEL_PATH = "output/ner_model"
+TOKENIZER_PATH = "output/bert/tokenizer_tiny"
+MODEL_PATH = "output/bert/ner_model_tiny"
 
 
 def predict(pipe, eval_dataset, queue):
@@ -24,8 +26,7 @@ def predict(pipe, eval_dataset, queue):
                    "I-organisation", "B-person", "I-person", "B-misc", "I-misc"]
     length = len(eval_dataset)
     for index, sentence in enumerate(eval_dataset):
-        if index % 1 == 0:
-            print(f"{index}/{length}")
+
         tokens = sentence["tokens"]
 
         tags = sentence["tags"]
@@ -52,8 +53,15 @@ def predict(pipe, eval_dataset, queue):
 
 def main():
 
+    parser = ArgumentParser()
+
+    parser.add_argument("-d", "--dataset")
+    parser.add_argument("-s", "--save", default=False, action="store_true")
+
+    args = parser.parse_args()
+
     eval_dataset = load_data(
-        "./data/CrossNER/conll2003/train_testing.txt", as_dict=True)
+        args.dataset, as_dict=True)
 
     for value in eval_dataset:
         value["tags"] = map_list(value["tags"], "ai")
@@ -78,7 +86,7 @@ def main():
     json.dump(config, open(MODEL_PATH+"/config.json", "w"))
     tokenizer_fine_tuned = BertTokenizerFast.from_pretrained(TOKENIZER_PATH)
     model_fine_tuned = AutoModelForTokenClassification.from_pretrained(
-        "output/ner_model")
+        MODEL_PATH)
 
     cmt = CustomTokenizerAligner(tokenizer_fine_tuned)
 
@@ -91,7 +99,7 @@ def main():
 
     length = len(eval_dataset)
 
-    split = 1
+    split = 2
 
     for i in range(split):
         start = i * (length // split)
@@ -111,8 +119,6 @@ def main():
     results = []
 
     for i in range(0, split):
-
-        print(f"Starting process {i}")
 
         p = Process(target=predict, args=(
             pipe, dataset_list[i], queue))
@@ -136,22 +142,32 @@ def main():
         labels.extend(result["labels"])
         predictions.extend(result["pred"])
     print("All processes done")
-    pickle.dump(labels, open("output/labels.list", "wb"))
-    pickle.dump(predictions, open("output/predictions.list", "wb"))
 
     precision, recall, f1 = compute_metrics(labels, predictions)
 
-    print(f"Precision: {precision}")
-    print(f"Recall: {recall}")
-    print(f"F1: {f1}")
-
     accuracy = compute_accuracy(labels, predictions)
-
-    print(f"Accuracy: {accuracy}")
 
     tag_accuracy = compute_tag_accuracy(labels, predictions)
 
-    print(f"Tag Accuracy: {tag_accuracy}")
+    f1_span = compute_span_f1(labels, predictions)
+
+    if args.save:
+        metrics = {
+            "accuracy": accuracy,
+            "tag_accuracy": tag_accuracy,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "span_f1": f1_span,
+        }
+
+        folder = args.dataset.split("/")[-2]
+
+        if not os.path.exists("output/metrics/bert/"):
+            os.makedirs("output/metrics/bert/")
+
+        json.dump(metrics, open(
+            "output/metrics/bert/{}.json".format(folder), "w+"))
 
 
 if __name__ == "__main__":

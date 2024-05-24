@@ -1,3 +1,4 @@
+import os
 import pickle
 import torch
 from torch import nn
@@ -52,8 +53,8 @@ class RNN(nn.Module):
 
 
 def train(train_data, dev_dataset, epochs, learning_rate):
-    print(f'Training on {len(train_data)} examples with {
-          epochs} epochs and learning rate {learning_rate}...')
+    # print(f'Training on {len(train_data)} examples with {
+    #       epochs} epochs and learning rate {learning_rate}...')
 
     token_vocab, tag_vocab = make_vocabs(train_data)
 
@@ -61,10 +62,14 @@ def train(train_data, dev_dataset, epochs, learning_rate):
 
     loss_function = nn.CrossEntropyLoss(ignore_index=-1, reduction='mean')
     optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+
+    if not os.path.exists("output/rnn"):
+        os.makedirs("output/rnn")
+
     pickle.dump(token_vocab, open("output/rnn/token_vocab.pkl", "wb"))
     pickle.dump(tag_vocab, open("output/rnn/tag_vocab.pkl", "wb"))
     for epoch in range(epochs):
-        print(f"Epoch {epoch + 1}/{epochs}")
+        print("Epoch {}/{}".format(epoch + 1, epochs))
 
         for sentence, tags in train_data:
             model.zero_grad()
@@ -79,10 +84,11 @@ def train(train_data, dev_dataset, epochs, learning_rate):
             loss.backward()
             optimizer.step()
 
-        print(f"Loss: {loss.item()} Accuracy: {compute_accuracy(
-            model, dev_dataset, token_vocab, tag_vocab)} epoch {epoch + 1}/{epoch}")
+        # print(f"Loss: {loss.item()} Accuracy: {compute_accuracy(
+        #     model, dev_dataset, token_vocab, tag_vocab)} epoch {epoch + 1}/{epoch}")
 
-        torch.save(model.state_dict(), f'output/rnn/model-{epoch+1}.pth')
+        torch.save(model.state_dict(),
+                   "output/rnn/model-{}.pth".format(epoch + 1))
 
     torch.save(model.state_dict(), "output/rnn/model.pth")
 
